@@ -1,0 +1,77 @@
+import boto3
+import pandas as pd
+from datetime import datetime
+
+# Initialize clients
+lambda_client = boto3.client('lambda')
+cloudwatch_client = boto3.client('cloudwatch')
+events_client = boto3.client('events')
+
+# Collect Lambda details
+def get_lambda_details():
+    functions = []
+
+    # List all Lambda functions
+    paginator = lambda_client.get_paginator('list_functions')
+    for page in paginator.paginate():
+        for function in page['Functions']:
+            function_name = function['FunctionName']
+            function_arn = function['FunctionArn']
+
+            # Get tags
+            tags = lambda_client.list_tags(Resource=function_arn).get('Tags', {})
+
+            # Get triggers (Event source mappings)
+            event_sources = lambda_client.list_event_source_mappings(FunctionName=function_name)
+            triggers = [event['EventSourceArn'] for event in event_sources['EventSourceMappings']]
+
+            # Get CloudWatch Event rules
+            rules = events_client.list_rule_names_by_target(TargetArn=function_arn)['RuleNames']
+            triggers.extend(rules)
+
+            # Get last invocation time (CloudWatch metric)
+            metrics = cloudwatch_client.get_metric_statistics(
+                Namespace='AWS/Lambda',
+                MetricName='Invocations',
+                Dimensions=[{'Name': 'FunctionName', 'Value': function_name}],
+                StartTime=datetime.utcnow() - timedelta(days=30),
+                EndTime=datetime.utcnow(),
+                Period=3600,
+                Statistics=['Sum']
+            )
+
+            last_invocation = (
+                max(metrics['Datapoints'], key=lambda x: x['Timestamp'])['Timestamp']
+                if metrics['Datapoints'] else None
+            )
+
+            functions.append({
+                'FunctionName': function_name,
+                'ARN': function_arn,
+                'Tags': tags,
+                'Triggers': triggers,
+                'LastInvocation': last_invocation
+            })
+
+    return functions
+
+# Save to Excel
+def save_to_excel(functions):
+    data = []
+    for func in functions:
+        data.append({
+            'Function Name': func['FunctionName'],
+            'ARN': func['ARN'],
+            'Tags': ', '.join([f"{k}:{v}" for k, v in func['Tags'].items()]),
+            'Triggers': ', '.join(func['Triggers']),
+            'Last Invocation': func['LastInvocation'].strftime('%Y-%m-%d %H:%M:%S') if func['LastInvocation'] else 'N/A'
+        })
+
+    df = pd.DataFrame(data)
+    df.to_excel('lambda_report.xlsx', index=False)
+
+# Main execution
+if __name__ == "__main__":
+    lambda_details = get_lambda_details()
+    save_to_excel(lambda_details)
+    print("Report generated: lambda_report.xlsx")
