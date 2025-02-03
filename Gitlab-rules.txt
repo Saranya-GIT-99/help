@@ -1,0 +1,6 @@
+curl --header "PRIVATE-TOKEN: <your_token>" \
+"https://gitlab.example.com/api/v4/projects?search=<project_name>"
+
+
+curl --header "PRIVATE-TOKEN: <your_token>" \
+"https://gitlab.example.com/api/v4/projects/<project_id>/approval_rules" > approval_rules_<project_id>.json
