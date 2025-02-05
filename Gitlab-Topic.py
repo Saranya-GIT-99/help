@@ -4,23 +4,19 @@ import time
 from urllib.parse import urlparse, quote
 from getpass import getpass
 
-# Configuration
-GITLAB_DOMAIN = "gitlab.example.com"  # Update with your GitLab domain
-API_ENDPOINT = f"https://{GITLAB_DOMAIN}/api/v4/projects"
+GITLAB_DOMAIN = "gitlab.example.com"  # Update this!
 INPUT_CSV = "projects.csv"
 REPORT_CSV = "update_report.csv"
-DELAY_SECONDS = 0.5  # Adjust to avoid rate limits
+DELAY_SECONDS = 0.5  # Avoid rate limits
 
-def get_project_id_from_url(url):
+def get_encoded_project_path(url):
     parsed_url = urlparse(url)
-    project_path = parsed_url.path.strip('/')
-    return quote(project_path, safe='')
+    project_path = parsed_url.path.strip('/')  # Handles any depth!
+    return quote(project_path, safe='')  # Encode slashes (%2F)
 
 def main():
-    # Prompt for token securely
     token = getpass("Enter your GitLab Private Token: ")
     
-    # Prepare report file
     with open(REPORT_CSV, 'w', newline='') as report_file:
         report_writer = csv.writer(report_file)
         report_writer.writerow([
@@ -28,16 +24,14 @@ def main():
             "HTTP Status Code", "Error Message"
         ])
         
-        # Read input CSV
         with open(INPUT_CSV, 'r') as csvfile:
             reader = csv.DictReader(csvfile)
             for row in reader:
                 url = row['url']
                 topics = row['topics'].split(',')
-                encoded_path = get_project_id_from_url(url)
-                api_url = f"{API_ENDPOINT}/{encoded_path}"
+                encoded_path = get_encoded_project_path(url)
+                api_url = f"https://{GITLAB_DOMAIN}/api/v4/projects/{encoded_path}"
                 
-                # Send API request
                 try:
                     response = requests.put(
                         api_url,
@@ -46,7 +40,6 @@ def main():
                     )
                     status_code = response.status_code
                     
-                    # Check for success/failure
                     if status_code == 200:
                         status = "Success"
                         error_msg = ""
@@ -66,13 +59,8 @@ def main():
                     error_msg = str(e)
                     print(f"❌ Error: {url} ({error_msg})")
                 
-                # Write to report
                 report_writer.writerow([
-                    url, 
-                    ",".join(topics), 
-                    status, 
-                    status_code, 
-                    error_msg
+                    url, ",".join(topics), status, status_code, error_msg
                 ])
                 time.sleep(DELAY_SECONDS)
 
