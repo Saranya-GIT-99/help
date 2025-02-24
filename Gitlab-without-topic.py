@@ -3,12 +3,8 @@ import getpass
 import pandas as pd
 from urllib.parse import urljoin
 from datetime import datetime
-from openpyxl import Workbook
-from openpyxl.styles import Font, Alignment
-from openpyxl.utils import get_column_letter
 
 def get_gitlab_projects_without_topics():
-    # Get credentials at runtime
     gitlab_url = input("Enter GitLab instance URL (e.g., https://gitlab.com): ").strip()
     access_token = getpass.getpass("Enter your GitLab access token: ")
 
@@ -28,7 +24,8 @@ def get_gitlab_projects_without_topics():
                 "simple": "false",
                 "membership": "true",
                 "statistics": "true",
-                "with_shared": "false"
+                "order_by": "last_activity_at",
+                "sort": "desc"
             }
 
             response = requests.get(url, headers=headers, params=params)
@@ -52,13 +49,17 @@ def get_gitlab_projects_without_topics():
                         "Storage (MB)": project['statistics']['storage_size'] // 1024 // 1024
                     })
 
-            if 'X-Next-Page' in response.headers:
-                page = int(response.headers['X-Next-Page'])
-            else:
+            # Fixed pagination handling
+            next_page = response.headers.get('X-Next-Page')
+            if not next_page or not next_page.isdigit():
                 break
+            page = int(next_page)
 
     except requests.exceptions.RequestException as e:
         print(f"Error accessing GitLab API: {str(e)}")
+        return None
+    except KeyError as e:
+        print(f"Missing expected field in API response: {str(e)}")
         return None
 
     return projects
@@ -68,52 +69,40 @@ def create_excel_report(projects):
         print("No projects found without topics. Exiting...")
         return
 
-    # Create DataFrame
     df = pd.DataFrame(projects)
-    
-    # Generate filename with timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
     filename = f"GitLab_Projects_Without_Topics_{timestamp}.xlsx"
     
-    # Create Excel writer
-    writer = pd.ExcelWriter(filename, engine='openpyxl')
-    df.to_excel(writer, index=False, sheet_name='Projects Report')
-    
-    # Get workbook and worksheet
-    workbook = writer.book
-    worksheet = writer.sheets['Projects Report']
-    
-    # Formatting
-    header_font = Font(bold=True, color="FFFFFF")
-    header_fill = Alignment(horizontal="center", vertical="center")
-    
-    # Set column widths and formatting
-    column_widths = {
-        'A': 10,  # Project ID
-        'B': 25,  # Project Name
-        'C': 30,  # Namespace
-        'D': 60,  # URL
-        'E': 18,  # Created Date
-        'F': 18,  # Last Activity
-        'G': 12,  # Visibility
-        'H': 12,  # Open Issues
-        'I': 15   # Storage (MB)
-    }
-    
-    for col, width in column_widths.items():
-        worksheet.column_dimensions[col].width = width
-    
-    # Format headers
-    for cell in worksheet[1]:
-        cell.font = header_font
-        cell.alignment = header_fill
-        cell.fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
-    
-    # Freeze header row
-    worksheet.freeze_panes = 'A2'
-    
-    # Save the workbook
-    writer.close()
+    # Create Excel writer with auto-adjusting columns
+    with pd.ExcelWriter(filename, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Projects')
+        
+        # Get workbook and worksheet objects
+        workbook = writer.book
+        worksheet = writer.sheets['Projects']
+        
+        # Add header formatting
+        header_format = workbook.add_format({
+            'bold': True,
+            'text_wrap': True,
+            'valign': 'top',
+            'fg_color': '#4472C4',
+            'font_color': 'white',
+            'border': 1
+        })
+        
+        # Apply header format
+        for col_num, value in enumerate(df.columns.values):
+            worksheet.write(0, col_num, value, header_format)
+        
+        # Auto-adjust column widths
+        for i, col in enumerate(df.columns):
+            max_len = max((
+                df[col].astype(str).map(len).max(),
+                len(col)
+            )) + 2
+            worksheet.set_column(i, i, max_len)
+
     print(f"\nReport generated successfully: {filename}")
 
 if __name__ == "__main__":
