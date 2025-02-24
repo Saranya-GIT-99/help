@@ -3,108 +3,134 @@ import getpass
 import pandas as pd
 from urllib.parse import urljoin
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
+from tenacity import retry, stop_after_attempt, wait_exponential
+import logging
 
-def get_gitlab_projects_without_topics():
-    gitlab_url = input("Enter GitLab instance URL (e.g., https://gitlab.com): ").strip()
-    access_token = getpass.getpass("Enter your GitLab access token: ")
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-    api_base = urljoin(gitlab_url, "/api/v4/")
-    headers = {"PRIVATE-TOKEN": access_token}
-    
-    projects = []
-    page = 1
-    per_page = 100
+class GitLabProjectExporter:
+    def __init__(self):
+        self.base_url = None
+        self.headers = None
+        self.session = requests.Session()
+        self.per_page = 100  # Max allowed by GitLab API
+        self.total_projects = 0
 
-    try:
-        while True:
-            url = f"{api_base}projects"
-            params = {
-                "per_page": per_page,
-                "page": page,
-                "simple": "false",
-                "membership": "true",
-                "statistics": "true",
-                "order_by": "last_activity_at",
-                "sort": "desc"
-            }
-
-            response = requests.get(url, headers=headers, params=params)
+    def configure(self):
+        """Get runtime configuration"""
+        self.base_url = urljoin(
+            input("Enter GitLab instance URL (e.g., https://gitlab.com): ").strip(),
+            "/api/v4/"
+        )
+        self.headers = {"PRIVATE-TOKEN": getpass.getpass("Enter your GitLab access token: ")}
+        
+    @retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, max=10))
+    def fetch_page(self, page):
+        """Fetch a single page of projects with retry logic"""
+        try:
+            response = self.session.get(
+                f"{self.base_url}projects",
+                headers=self.headers,
+                params={
+                    "per_page": self.per_page,
+                    "page": page,
+                    "membership": "true",
+                    "statistics": "true",
+                    "order_by": "last_activity_at",
+                    "sort": "desc",
+                    "simple": "false"
+                },
+                timeout=30
+            )
             response.raise_for_status()
+            return response
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Failed to fetch page {page}: {str(e)}")
+            raise
 
-            batch = response.json()
-            if not batch:
-                break
-
-            for project in batch:
-                if not project.get('topics'):
+    def process_projects(self, response):
+        """Process batch of projects"""
+        projects = []
+        for project in response.json():
+            if not project.get('topics'):
+                try:
                     projects.append({
-                        "Project ID": project['id'],
-                        "Project Name": project['name'],
-                        "Namespace": project['namespace']['full_path'],
-                        "URL": project['web_url'],
-                        "Created Date": project['created_at'],
-                        "Last Activity": project['last_activity_at'],
-                        "Visibility": project['visibility'],
-                        "Open Issues": project['open_issues_count'],
-                        "Storage (MB)": project['statistics']['storage_size'] // 1024 // 1024
+                        "id": project['id'],
+                        "name": project['name'],
+                        "path_with_namespace": project['path_with_namespace'],
+                        "web_url": project['web_url'],
+                        "created_at": project['created_at'],
+                        "last_activity_at": project['last_activity_at'],
+                        "visibility": project['visibility'],
+                        "open_issues": project.get('open_issues_count', 0),
+                        "storage_size": project.get('statistics', {}).get('storage_size', 0) // 1024 // 1024,
+                        "archived": project.get('archived', False)
                     })
+                except KeyError as e:
+                    logging.warning(f"Skipping project {project.get('id')} missing field: {e}")
+        return projects
 
-            # Fixed pagination handling
-            next_page = response.headers.get('X-Next-Page')
-            if not next_page or not next_page.isdigit():
-                break
-            page = int(next_page)
-
-    except requests.exceptions.RequestException as e:
-        print(f"Error accessing GitLab API: {str(e)}")
-        return None
-    except KeyError as e:
-        print(f"Missing expected field in API response: {str(e)}")
-        return None
-
-    return projects
-
-def create_excel_report(projects):
-    if not projects:
-        print("No projects found without topics. Exiting...")
-        return
-
-    df = pd.DataFrame(projects)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    filename = f"GitLab_Projects_Without_Topics_{timestamp}.xlsx"
-    
-    # Create Excel writer with auto-adjusting columns
-    with pd.ExcelWriter(filename, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Projects')
+    def fetch_all_projects(self):
+        """Fetch all projects using parallel requests"""
+        logging.info("Starting project export...")
         
-        # Get workbook and worksheet objects
-        workbook = writer.book
-        worksheet = writer.sheets['Projects']
+        # Get first page to determine total count
+        initial_response = self.fetch_page(1)
+        total_pages = int(initial_response.headers.get('X-Total-Pages', 1))
+        self.total_projects = int(initial_response.headers.get('X-Total', 0))
         
-        # Add header formatting
-        header_format = workbook.add_format({
-            'bold': True,
-            'text_wrap': True,
-            'valign': 'top',
-            'fg_color': '#4472C4',
-            'font_color': 'white',
-            'border': 1
-        })
-        
-        # Apply header format
-        for col_num, value in enumerate(df.columns.values):
-            worksheet.write(0, col_num, value, header_format)
-        
-        # Auto-adjust column widths
-        for i, col in enumerate(df.columns):
-            max_len = max((
-                df[col].astype(str).map(len).max(),
-                len(col)
-            )) + 2
-            worksheet.set_column(i, i, max_len)
+        logging.info(f"Total projects to process: {self.total_projects} ({total_pages} pages)")
 
-    print(f"\nReport generated successfully: {filename}")
+        # Process first page
+        all_projects = self.process_projects(initial_response)
+
+        # Process remaining pages in parallel
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = []
+            for page in range(2, total_pages + 1):
+                futures.append(executor.submit(self.fetch_page, page))
+                
+            for future in futures:
+                try:
+                    response = future.result()
+                    all_projects.extend(self.process_projects(response))
+                except Exception as e:
+                    logging.error(f"Failed to process page: {str(e)}")
+
+        logging.info(f"Successfully processed {len(all_projects)} projects")
+        return all_projects
+
+    def export_to_excel(self, projects):
+        """Export results to optimized Excel file"""
+        if not projects:
+            logging.warning("No projects found to export")
+            return
+
+        logging.info("Creating Excel report...")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+        filename = f"gitlab_projects_export_{timestamp}.xlsx"
+
+        # Create DataFrame with optimized data types
+        df = pd.DataFrame(projects)
+        df['created_at'] = pd.to_datetime(df['created_at'])
+        df['last_activity_at'] = pd.to_datetime(df['last_activity_at'])
+
+        # Use efficient Excel writer
+        with pd.ExcelWriter(filename, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='Projects')
+            
+            # Auto-adjust column widths
+            worksheet = writer.sheets['Projects']
+            for column in worksheet.columns:
+                max_length = max(len(str(cell.value)) for cell in column)
+                worksheet.column_dimensions[column[0].column_letter].width = max_length + 2
+
+        logging.info(f"Excel report generated: {filename}")
 
 if __name__ == "__main__":
-    projects = get_gitlab_projects_without_topics()
-    create_excel_report(projects)
+    exporter = GitLabProjectExporter()
+    exporter.configure()
+    projects = exporter.fetch_all_projects()
+    exporter.export_to_excel(projects)
