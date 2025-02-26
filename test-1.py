@@ -1,130 +1,103 @@
 import pandas as pd
-import json
-import os
 import requests
+from getpass import getpass
 
-script_dir = os.path.dirname(os.path.abspath(__file__))
-
-# Configuration
-SPINNAKER_URL = "https://oes-prd.rod.intranet.net/gate"
-GATE_COOKIE = "your-spinnaker-cookie-here"
-INPUT_EXCEL_PATH = os.path.join(script_dir, "input-data.xlsx")
-OUTPUT_JSON_PATH = os.path.join(script_dir, "updated_pipelines.json")
-
-def get_spinnaker_pipelines(application):
-    """Fetch all pipelines for an application"""
-    url = f"{SPINNAKER_URL}/applications/{application}/pipelineConfigs"
-    headers = {
-        "Accept": "application/json",
-        "Cookie": GATE_COOKIE
-    }
-    try:
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        print(f"Error fetching pipelines for {application}: {str(e)}")
-        return []
-
-def update_pipeline(pipeline_data):
-    """Update pipeline in Spinnaker"""
-    url = f"{SPINNAKER_URL}/pipelines?staleCheck=true"
-    headers = {
-        "Content-Type": "application/json",
-        "Cookie": GATE_COOKIE
-    }
-    try:
-        response = requests.post(url, json=pipeline_data, headers=headers)
-        response.raise_for_status()
-        return True
-    except Exception as e:
-        print(f"Error updating pipeline {pipeline_data['name']}: {str(e)}")
-        return False
-
-def modify_metadata(pipeline, action, key, value=None):
-    """Modify pipeline metadata based on action"""
-    if 'metadata' not in pipeline:
-        pipeline['metadata'] = {}
+def get_pipeline_config(gate_url, app, pipeline_name, headers):
+    # Get all pipelines for the application
+    url = f"{gate_url}/applications/{app}/pipelineConfigs"
+    response = requests.get(url, headers=headers)
     
-    if action == 'add':
-        pipeline['metadata'][key] = value
-    elif action == 'replace':
-        if key in pipeline['metadata']:
-            pipeline['metadata'][key] = value
-    elif action == 'remove':
-        if key in pipeline['metadata']:
-            del pipeline['metadata'][key]
-    return pipeline
+    if response.status_code != 200:
+        raise Exception(f"Failed to get pipelines for {app}. Status: {response.status_code}")
+    
+    pipelines = response.json()
+    pipeline = next((p for p in pipelines if p['name'] == pipeline_name), None)
+    
+    if not pipeline:
+        raise Exception(f"Pipeline '{pipeline_name}' not found in {app}")
+    
+    # Get full pipeline configuration
+    pipeline_id = pipeline['id']
+    url = f"{gate_url}/pipelines/{pipeline_id}"
+    response = requests.get(url, headers=headers)
+    
+    if response.status_code != 200:
+        raise Exception(f"Failed to get pipeline config. Status: {response.status_code}")
+    
+    return response.json(), pipeline_id
 
-def process_input_file():
-    """Process Excel input file and update pipelines"""
+def update_metadata(action, key, value, pipeline_config):
+    metadata = pipeline_config.get('metadata', {})
+    
+    if action == 'update':
+        metadata[key] = value
+        print(f"Updating {key} = {value}")
+    elif action == 'replace':
+        metadata = {key: value}
+        print(f"Replacing metadata with {key} = {value}")
+    elif action == 'remove':
+        if key in metadata:
+            del metadata[key]
+            print(f"Removed key: {key}")
+        else:
+            print(f"Key {key} not found in metadata")
+    
+    pipeline_config['metadata'] = metadata
+    return pipeline_config
+
+def main():
+    # User inputs
+    gate_url = input("Enter Spinnaker Gate URL (e.g., https://gate.example.com): ").strip()
+    cookie = getpass("Enter session cookie (e.g., SESSION=abc123): ").strip()
+    excel_path = input("Enter path to Excel file: ").strip()
+    action = input("Enter action (update/replace/remove): ").strip().lower()
+    
+    if action not in ['update', 'replace', 'remove']:
+        print("Invalid action. Must be: update, replace, or remove")
+        return
+    
     # Read Excel file
     try:
-        df = pd.read_excel(INPUT_EXCEL_PATH)
+        df = pd.read_excel(excel_path)
+        required_columns = ['Application', 'Pipeline Name', 'Key']
+        if action != 'remove':
+            required_columns.append('Value')
+            
+        if not all(col in df.columns for col in required_columns):
+            print(f"Excel file must contain columns: {', '.join(required_columns)}")
+            return
     except Exception as e:
-        print(f"Error reading input file: {str(e)}")
+        print(f"Error reading Excel file: {str(e)}")
         return
-
-    # Get user action
-    while True:
-        action = input("Enter operation (add/replace/remove): ").lower()
-        if action in ['add', 'replace', 'remove']:
-            break
-        print("Invalid operation! Please choose add/replace/remove")
-
-    total_updated = 0
-    errors = []
-
-    # Process each row
-    for index, row in df.iterrows():
-        app = row.get('application')
-        pipeline_name = row.get('pipeline')
-        key = row.get('key')
-        value = row.get('value') if action != 'remove' else None
-
-        if not all([app, pipeline_name, key]):
-            errors.append(f"Row {index+1}: Missing required fields")
-            continue
-
-        # Get pipelines for application
-        pipelines = get_spinnaker_pipelines(app)
-        if not pipelines:
-            errors.append(f"{app}: No pipelines found")
-            continue
-
-        # Find matching pipeline
-        target_pipeline = next(
-            (p for p in pipelines if p.get('name') == pipeline_name), 
-            None
-        )
-        if not target_pipeline:
-            errors.append(f"{app}/{pipeline_name}: Pipeline not found")
-            continue
-
-        # Modify metadata
-        modified_pipeline = modify_metadata(
-            target_pipeline, 
-            action, 
-            key, 
-            value
-        )
-
-        # Update Spinnaker
-        if update_pipeline(modified_pipeline):
-            total_updated += 1
-        else:
-            errors.append(f"{app}/{pipeline_name}: Update failed")
-
-    # Print summary
-    print(f"\nOperation completed: {action.upper()}")
-    print(f"Total attempts: {len(df)}")
-    print(f"Successfully updated: {total_updated}")
-    print(f"Errors: {len(errors)}")
     
-    if errors:
-        print("\nError details:")
-        for error in errors:
-            print(f"- {error}")
+    headers = {'Cookie': cookie, 'Content-Type': 'application/json'}
+    
+    for index, row in df.iterrows():
+        app = row['Application']
+        pipeline_name = row['Pipeline Name']
+        key = row['Key']
+        value = row.get('Value', None)
+        
+        print(f"\nProcessing {app}/{pipeline_name} - {key}")
+        
+        try:
+            # Get current pipeline config
+            pipeline_config, pipeline_id = get_pipeline_config(gate_url, app, pipeline_name, headers)
+            
+            # Update metadata
+            updated_config = update_metadata(action, key, value, pipeline_config)
+            
+            # Push changes
+            url = f"{gate_url}/pipelines/{pipeline_id}"
+            response = requests.put(url, json=updated_config, headers=headers)
+            
+            if response.status_code == 200:
+                print("Successfully updated pipeline")
+            else:
+                print(f"Failed to update pipeline. Status: {response.status_code}")
+        except Exception as e:
+            print(f"Error: {str(e)}")
+            continue
 
 if __name__ == "__main__":
-    process_input_file()
+    main()
