@@ -36,13 +36,11 @@ deny_messages = [msg] {
 
 
 {
-  "policyInput": {
-    "pipeline": {
-      "initiator": "${execution.trigger.user}",
-      "stages": {
-        "Manual Judgment": {
-          "approver": "${stage['Manual Judgment'].lastModifiedBy}"
-        }
+  "pipeline": {
+    "initiator": "${execution.trigger?.user ?: 'unknown'}",
+    "stages": {
+      "Manual Judgment": {
+        "approver": "${stage['Manual Judgment']?.lastModifiedBy ?: 'unknown'}"
       }
     }
   }
