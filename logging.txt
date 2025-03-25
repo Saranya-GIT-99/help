@@ -129,3 +129,71 @@ print(f"[Stage: {stage_name}] Log message...")
 4. URL is exposed in the pipeline UI for debugging.
 
 This approach ensures logs for each stage are isolated, even though they use the same Lambda function.
+
+
+
+
+# Generate UUID for the stage
+CORRELATION_ID=$(uuidgen)
+
+# Invoke API Gateway with the correlation ID as a header/query parameter
+API_RESPONSE=$(curl -s -X POST \
+  -H "X-Correlation-ID: $CORRELATION_ID" \
+  "https://YOUR_API_GATEWAY_ENDPOINT")
+
+# Store the correlation ID for later log filtering
+echo "CORRELATION_ID=$CORRELATION_ID" >> /tmp/spinnaker.env
+
+
+
+import json
+import os
+
+def lambda_handler(event, context):
+    # Extract correlation ID from headers/query/body
+    correlation_id = event.get('headers', {}).get('X-Correlation-ID', 'N/A')
+    
+    # Log the correlation ID with CloudWatch
+    print(f"[Correlation ID: {correlation_id}] Starting stage-specific logic...")
+    
+    # Your stage-specific logic here (determined by event parameters)
+    if event.get('path') == "/stage1":
+        # Logic for Stage 1
+    elif event.get('path') == "/stage2":
+        # Logic for Stage 2
+    
+    return {
+        "statusCode": 200,
+        "body": json.dumps({"correlationId": correlation_id})
+    }
+
+
+# Load the correlation ID from the previous step
+CORRELATION_ID=$(cat /tmp/spinnaker.env | grep CORRELATION_ID | cut -d '=' -f2)
+
+# URL-encode the CloudWatch Logs Insights query
+QUERY="fields%20%40timestamp%2C%20%40message%0Afilter%20%40message%20like%20%2F${CORRELATION_ID}%2F"
+START_TIME=$(date -u -d "2 minutes ago" +"%s")000  # Adjust time window as needed
+END_TIME=$(date -u +"%s")000
+
+# Generate the URL
+LOG_URL="https://${AWS_REGION}.console.aws.amazon.com/cloudwatch/home?region=${AWS_REGION}#logs-insights:query=${QUERY}&start=${START_TIME}&end=${END_TIME}"
+
+# Expose the URL in Spinnaker
+echo "Logs URL for this stage: $LOG_URL"
+
+
+
+- type: manualJudgment
+  name: Check Logs
+  judgmentInputs: []
+  sendNotifications: true
+  notifications:
+    - address: "#your-slack-channel"
+      message: "Logs for Stage ${execution.stage.name}: ${#stage('InvokeLambda').outputs.logUrl}"
+
+
+
+
+
+
