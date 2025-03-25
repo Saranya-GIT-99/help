@@ -1,0 +1,131 @@
+To expose AWS Lambda logs for each Spinnaker pipeline stage when all stages interact with the **same Lambda function** (but execute different internal logic per stage), follow this structured approach:
+
+---
+
+### **Solution: Use Correlation IDs to Track Stage-Specific Invocations**
+Since the same Lambda is reused across stages but behaves differently, inject a **unique correlation ID** (e.g., UUID) into each invocation. Use this ID to filter logs for each stage.
+
+#### **Step 1: Generate a Unique ID in Spinnaker for Each Stage**
+Add a **preprocessing script** in each Spinnaker stage to generate a UUID and pass it to the Lambda via API Gateway.  
+**Example (Run Job Stage):**
+```bash
+# Generate UUID for the stage
+CORRELATION_ID=$(uuidgen)
+
+# Invoke API Gateway with the correlation ID as a header/query parameter
+API_RESPONSE=$(curl -s -X POST \
+  -H "X-Correlation-ID: $CORRELATION_ID" \
+  "https://YOUR_API_GATEWAY_ENDPOINT")
+
+# Store the correlation ID for later log filtering
+echo "CORRELATION_ID=$CORRELATION_ID" >> /tmp/spinnaker.env
+```
+
+#### **Step 2: Modify Lambda to Log the Correlation ID**
+Update the Lambda function to log the correlation ID from the incoming request.  
+**Example (Python Lambda):**
+```python
+import json
+import os
+
+def lambda_handler(event, context):
+    # Extract correlation ID from headers/query/body
+    correlation_id = event.get('headers', {}).get('X-Correlation-ID', 'N/A')
+    
+    # Log the correlation ID with CloudWatch
+    print(f"[Correlation ID: {correlation_id}] Starting stage-specific logic...")
+    
+    # Your stage-specific logic here (determined by event parameters)
+    if event.get('path') == "/stage1":
+        # Logic for Stage 1
+    elif event.get('path') == "/stage2":
+        # Logic for Stage 2
+    
+    return {
+        "statusCode": 200,
+        "body": json.dumps({"correlationId": correlation_id})
+    }
+```
+
+#### **Step 3: Build CloudWatch Logs URL with Correlation ID**
+After invoking the Lambda via API Gateway, dynamically generate a CloudWatch Logs Insights URL filtered by the correlation ID.  
+**Example Script in Spinnaker:**
+```bash
+# Load the correlation ID from the previous step
+CORRELATION_ID=$(cat /tmp/spinnaker.env | grep CORRELATION_ID | cut -d '=' -f2)
+
+# URL-encode the CloudWatch Logs Insights query
+QUERY="fields%20%40timestamp%2C%20%40message%0Afilter%20%40message%20like%20%2F${CORRELATION_ID}%2F"
+START_TIME=$(date -u -d "2 minutes ago" +"%s")000  # Adjust time window as needed
+END_TIME=$(date -u +"%s")000
+
+# Generate the URL
+LOG_URL="https://${AWS_REGION}.console.aws.amazon.com/cloudwatch/home?region=${AWS_REGION}#logs-insights:query=${QUERY}&start=${START_TIME}&end=${END_TIME}"
+
+# Expose the URL in Spinnaker
+echo "Logs URL for this stage: $LOG_URL"
+```
+
+#### **Step 4: Expose the URL in Spinnaker UI**
+Add a **Manual Judgment Stage** or use Spinnaker’s **Notification** system to display the log URL.  
+**Example Pipeline Stage Configuration:**
+```yaml
+- type: manualJudgment
+  name: Check Logs
+  judgmentInputs: []
+  sendNotifications: true
+  notifications:
+    - address: "#your-slack-channel"
+      message: "Logs for Stage ${execution.stage.name}: ${#stage('InvokeLambda').outputs.logUrl}"
+```
+
+---
+
+### **Key Considerations**
+1. **IAM Permissions**:
+   - Spinnaker’s execution role must have permissions to:
+     - Invoke API Gateway (`apigateway:POST`).
+     - Read CloudWatch Logs (`logs:FilterLogEvents`).
+   - Lambda must have permission to write logs to CloudWatch.
+
+2. **Log Formatting**:
+   - Ensure the Lambda function logs the correlation ID in a consistent format (e.g., `[Correlation ID: abc123]`).
+
+3. **Time Windows**:
+   - Adjust `START_TIME` and `END_TIME` in the URL to account for delays in log ingestion.
+
+4. **Error Handling**:
+   - Add retries in Spinnaker if API Gateway/Lambda calls fail.
+   - Log correlation IDs even in Lambda error scenarios.
+
+---
+
+### **Example Output**
+A Spinnaker pipeline stage showing a CloudWatch URL filtered by the correlation ID:  
+`https://us-east-1.console.aws.amazon.com/cloudwatch/home?region=us-east-1#logs-insights:query=fields%20@timestamp%2C%20@message%0Afilter%20@message%20like%20%2Fabc123%2F&start=1630000000000&end=1630003000000`
+
+---
+
+### **Alternative: Use Stage Name as Identifier**
+If correlation IDs are too generic, pass the **Spinnaker stage name** to Lambda and log it:  
+```bash
+# In Spinnaker
+STAGE_NAME=$(echo "${execution.stage.name}" | tr ' ' '-')
+curl -X POST -H "X-Stage-Name: $STAGE_NAME" "https://API_GATEWAY_URL"
+```
+
+```python
+# In Lambda
+stage_name = event['headers']['X-Stage-Name']
+print(f"[Stage: {stage_name}] Log message...")
+```
+
+---
+
+### **Final Workflow**
+1. Spinnaker stage generates a unique ID and invokes Lambda via API Gateway.
+2. Lambda logs all activity with the ID.
+3. Spinnaker builds a CloudWatch URL filtered by the ID.
+4. URL is exposed in the pipeline UI for debugging.
+
+This approach ensures logs for each stage are isolated, even though they use the same Lambda function.
