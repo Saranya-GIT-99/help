@@ -14,9 +14,9 @@ def get_all_projects(gitlab_url, token):
             headers={"PRIVATE-TOKEN": token},
             params={
                 "per_page": 100,
-                "page": page,
+                "page": page",
                 "statistics": True,
-                "include_stats": True
+                "simple": True
             }
         )
 
@@ -34,6 +34,11 @@ def get_all_projects(gitlab_url, token):
 
 def format_size(size_bytes):
     return round(size_bytes / (1024 ** 2), 2)  # Convert bytes to MB
+
+def is_project_empty(project):
+    # Check if repository is empty (size = 0) or has no branches
+    return project.get('statistics', {}).get('storage_size', 0) == 0 or \
+           project.get('default_branch') is None
 
 def main():
     parser = argparse.ArgumentParser(description='Collect GitLab project information')
@@ -58,27 +63,26 @@ def main():
         with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
             fieldnames = [
                 'Project Name', 'Project ID', 'Size (MB)', 'Created At',
-                'Last Activity At', 'Archived', 'Empty Repository', 
-                'Web URL', 'Visibility'
+                'Last Activity At', 'Archived', 'Is Empty', 'Topics',
+                'Web URL'
             ]
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
 
             for project in projects:
-                stats = project.get('statistics', {})
-                size_mb = format_size(stats.get('storage_size', 0))
-                is_empty = project.get('empty_repo', False)
-
+                size_mb = format_size(project.get('statistics', {}).get('storage_size', 0))
+                topics = ', '.join(project.get('topics', [])) or 'None'
+                
                 writer.writerow({
-                    'Project Name': project['name_with_namespace'],
+                    'Project Name': project['name'],
                     'Project ID': project['id'],
                     'Size (MB)': size_mb,
                     'Created At': project['created_at'],
                     'Last Activity At': project['last_activity_at'],
                     'Archived': project['archived'],
-                    'Empty Repository': is_empty,
-                    'Web URL': project['web_url'],
-                    'Visibility': project['visibility']
+                    'Is Empty': is_project_empty(project),
+                    'Topics': topics,
+                    'Web URL': project['web_url']
                 })
 
         print(f"Successfully exported {len(projects)} projects to {filename}")
