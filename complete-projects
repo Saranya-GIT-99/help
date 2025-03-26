@@ -1,7 +1,7 @@
 import requests
 import csv
 import getpass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 def get_all_projects(gitlab_url, token):
     projects = []
@@ -39,6 +39,14 @@ def is_project_empty(project):
     return project.get('statistics', {}).get('storage_size', 0) == 0 or \
            project.get('default_branch') is None
 
+def is_project_inactive(last_activity_date, months=6):
+    """Consider project inactive if no activity in last X months (default: 6)"""
+    if not last_activity_date:
+        return True
+    last_active = datetime.fromisoformat(last_activity_date.replace('Z', '+00:00'))
+    cutoff_date = datetime.utcnow() - timedelta(days=months*30)
+    return last_active < cutoff_date
+
 def main():
     gitlab_url = input("Enter GitLab instance URL (e.g., https://gitlab.com): ").strip()
     token = getpass.getpass("Enter GitLab access token: ")
@@ -46,43 +54,63 @@ def main():
 
     try:
         print("\nFetching projects...")
-        projects = get_all_projects(gitlab_url, token)
+        all_projects = get_all_projects(gitlab_url, token)
         
-        if not projects:
+        if not all_projects:
             print("No projects found")
             return
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"gitlab_projects_{timestamp}.csv"
+        filename = f"gitlab_active_projects_{timestamp}.csv"
 
         with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
             fieldnames = [
-                'Project Name', 'Project ID', 'Size (MB)', 'Created At',
-                'Last Activity At', 'Archived', 'Is Empty', 'Topics',
+                'Project Name', 
+                'Project ID', 
+                'Size (MB)', 
+                'Created At',
+                'Last Activity At', 
+                'Status',
+                'Topics',
                 'Web URL'
             ]
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
 
-            for project in projects:
-                # Handle potential missing fields
-                archived_status = project.get('archived', False)
-                last_activity = project.get('last_activity_at', 'N/A')
-                created_at = project.get('created_at', 'N/A')
+            active_count = 0
+            inactive_count = 0
+
+            for project in all_projects:
+                # Skip archived and empty projects
+                if project.get('archived') or is_project_empty(project):
+                    continue
+
+                # Get last activity date
+                last_activity = project.get('last_activity_at')
                 
+                # Determine status
+                status = "Inactive" if is_project_inactive(last_activity) else "Active"
+
+                # Count status
+                if status == "Active":
+                    active_count += 1
+                else:
+                    inactive_count += 1
+
                 writer.writerow({
-                    'Project Name': project.get('name', 'Unknown'),
+                    'Project Name': project.get('name', 'N/A'),
                     'Project ID': project.get('id', 'N/A'),
                     'Size (MB)': format_size(project.get('statistics', {}).get('storage_size', 0)),
-                    'Created At': created_at,
-                    'Last Activity At': last_activity,
-                    'Archived': archived_status,
-                    'Is Empty': is_project_empty(project),
+                    'Created At': project.get('created_at', 'N/A'),
+                    'Last Activity At': last_activity or 'N/A',
+                    'Status': status,
                     'Topics': ', '.join(project.get('topics', [])) or 'None',
                     'Web URL': project.get('web_url', 'N/A')
                 })
 
-        print(f"\nSuccessfully exported {len(projects)} projects to {filename}")
+        print(f"\nReport generated: {filename}")
+        print(f"Total active projects: {active_count}")
+        print(f"Total inactive projects: {inactive_count}")
 
     except Exception as e:
         print(f"\nError: {str(e)}")
