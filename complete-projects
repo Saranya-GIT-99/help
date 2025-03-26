@@ -33,17 +33,15 @@ def get_all_projects(gitlab_url, token):
     return projects
 
 def format_size(size_bytes):
-    return round(size_bytes / (1024 ** 2), 2)  # Convert bytes to MB
+    return round(size_bytes / (1024 ** 2), 2) if size_bytes else 0.0
 
 def is_project_empty(project):
     return project.get('statistics', {}).get('storage_size', 0) == 0 or \
            project.get('default_branch') is None
 
 def main():
-    # Get runtime input
     gitlab_url = input("Enter GitLab instance URL (e.g., https://gitlab.com): ").strip()
     token = getpass.getpass("Enter GitLab access token: ")
-    
     gitlab_url = gitlab_url.rstrip('/')
 
     try:
@@ -67,19 +65,21 @@ def main():
             writer.writeheader()
 
             for project in projects:
-                size_mb = format_size(project.get('statistics', {}).get('storage_size', 0))
-                topics = ', '.join(project.get('topics', [])) or 'None'
+                # Handle potential missing fields
+                archived_status = project.get('archived', False)
+                last_activity = project.get('last_activity_at', 'N/A')
+                created_at = project.get('created_at', 'N/A')
                 
                 writer.writerow({
-                    'Project Name': project['name'],
-                    'Project ID': project['id'],
-                    'Size (MB)': size_mb,
-                    'Created At': project['created_at'],
-                    'Last Activity At': project['last_activity_at'],
-                    'Archived': project['archived'],
+                    'Project Name': project.get('name', 'Unknown'),
+                    'Project ID': project.get('id', 'N/A'),
+                    'Size (MB)': format_size(project.get('statistics', {}).get('storage_size', 0)),
+                    'Created At': created_at,
+                    'Last Activity At': last_activity,
+                    'Archived': archived_status,
                     'Is Empty': is_project_empty(project),
-                    'Topics': topics,
-                    'Web URL': project['web_url']
+                    'Topics': ', '.join(project.get('topics', [])) or 'None',
+                    'Web URL': project.get('web_url', 'N/A')
                 })
 
         print(f"\nSuccessfully exported {len(projects)} projects to {filename}")
