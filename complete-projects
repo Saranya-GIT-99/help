@@ -1,0 +1,90 @@
+import argparse
+import requests
+import csv
+from datetime import datetime
+
+def get_all_projects(gitlab_url, token):
+    projects = []
+    page = 1
+    api_url = f"{gitlab_url}/api/v4/projects"
+
+    while True:
+        response = requests.get(
+            api_url,
+            headers={"PRIVATE-TOKEN": token},
+            params={
+                "per_page": 100,
+                "page": page,
+                "statistics": True,
+                "include_stats": True
+            }
+        )
+
+        if response.status_code != 200:
+            raise Exception(f"API request failed with status {response.status_code}: {response.text}")
+
+        projects_page = response.json()
+        if not projects_page:
+            break
+
+        projects.extend(projects_page)
+        page += 1
+
+    return projects
+
+def format_size(size_bytes):
+    return round(size_bytes / (1024 ** 2), 2)  # Convert bytes to MB
+
+def main():
+    parser = argparse.ArgumentParser(description='Collect GitLab project information')
+    parser.add_argument('--url', required=True, help='GitLab instance URL (e.g., https://gitlab.com)')
+    parser.add_argument('--token', required=True, help='GitLab personal access token')
+    args = parser.parse_args()
+
+    gitlab_url = args.url.rstrip('/')
+    token = args.token
+
+    try:
+        print("Fetching projects...")
+        projects = get_all_projects(gitlab_url, token)
+        
+        if not projects:
+            print("No projects found")
+            return
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"gitlab_projects_{timestamp}.csv"
+
+        with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
+            fieldnames = [
+                'Project Name', 'Project ID', 'Size (MB)', 'Created At',
+                'Last Activity At', 'Archived', 'Empty Repository', 
+                'Web URL', 'Visibility'
+            ]
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+
+            for project in projects:
+                stats = project.get('statistics', {})
+                size_mb = format_size(stats.get('storage_size', 0))
+                is_empty = project.get('empty_repo', False)
+
+                writer.writerow({
+                    'Project Name': project['name_with_namespace'],
+                    'Project ID': project['id'],
+                    'Size (MB)': size_mb,
+                    'Created At': project['created_at'],
+                    'Last Activity At': project['last_activity_at'],
+                    'Archived': project['archived'],
+                    'Empty Repository': is_empty,
+                    'Web URL': project['web_url'],
+                    'Visibility': project['visibility']
+                })
+
+        print(f"Successfully exported {len(projects)} projects to {filename}")
+
+    except Exception as e:
+        print(f"Error: {str(e)}")
+
+if __name__ == "__main__":
+    main()
