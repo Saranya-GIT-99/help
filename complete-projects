@@ -1,6 +1,6 @@
-import argparse
 import requests
 import csv
+import getpass
 from datetime import datetime
 
 def get_all_projects(gitlab_url, token):
@@ -14,7 +14,7 @@ def get_all_projects(gitlab_url, token):
             headers={"PRIVATE-TOKEN": token},
             params={
                 "per_page": 100,
-                "page": page",
+                "page": page,
                 "statistics": True,
                 "simple": True
             }
@@ -36,21 +36,18 @@ def format_size(size_bytes):
     return round(size_bytes / (1024 ** 2), 2)  # Convert bytes to MB
 
 def is_project_empty(project):
-    # Check if repository is empty (size = 0) or has no branches
     return project.get('statistics', {}).get('storage_size', 0) == 0 or \
            project.get('default_branch') is None
 
 def main():
-    parser = argparse.ArgumentParser(description='Collect GitLab project information')
-    parser.add_argument('--url', required=True, help='GitLab instance URL (e.g., https://gitlab.com)')
-    parser.add_argument('--token', required=True, help='GitLab personal access token')
-    args = parser.parse_args()
-
-    gitlab_url = args.url.rstrip('/')
-    token = args.token
+    # Get runtime input
+    gitlab_url = input("Enter GitLab instance URL (e.g., https://gitlab.com): ").strip()
+    token = getpass.getpass("Enter GitLab access token: ")
+    
+    gitlab_url = gitlab_url.rstrip('/')
 
     try:
-        print("Fetching projects...")
+        print("\nFetching projects...")
         projects = get_all_projects(gitlab_url, token)
         
         if not projects:
@@ -85,10 +82,10 @@ def main():
                     'Web URL': project['web_url']
                 })
 
-        print(f"Successfully exported {len(projects)} projects to {filename}")
+        print(f"\nSuccessfully exported {len(projects)} projects to {filename}")
 
     except Exception as e:
-        print(f"Error: {str(e)}")
+        print(f"\nError: {str(e)}")
 
 if __name__ == "__main__":
     main()
