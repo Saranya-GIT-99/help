@@ -57,17 +57,29 @@ def list_tasks(cluster, service, creds):
             launchType='FARGATE'
         )
         return response['taskArns']
+    except IndexError as e:
+        print("Error: Index out of range while listing tasks.")
+        return []
+    except KeyError as e:
+        print("Error: Key not found in response while listing tasks.")
+        return []
     except Exception as e:
         print(f"Error listing tasks: {str(e)}")
         return []
+
 
 
 def updateenvvars(dict, envkey, envval, idx):
     try:
         print("Updating environment variable: " + str(envkey) + " with value: " + str(envval))
         dict['taskDefinition']['containerDefinitions'][idx]['environment'].append({"name": str(envkey), "value": str(envval)})
+    except IndexError as e:
+        print("Error: Index out of range while updating environment variables.")
+    except KeyError as e:
+        print("Error: Key not found in dictionary while updating environment variables.")
     except Exception as e:
         print(f"Error updating environment variables: {str(e)}")
+
 
     
 def updateenvfiles(dict,envkey,envval,idx):
