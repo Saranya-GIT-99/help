@@ -136,16 +136,19 @@ def attachvolume(dict,idx):
         print("Adding dependsOn to custom container..")
         dict['taskDefinition']['containerDefinitions'][idx]['dependsOn'] = [{ "containerName": "s3tofrgmount", "condition": "COMPLETE" }]
     
-def create_awsloggroup(lgroup,owner,refid,creds,tagsmap):
+def create_awsloggroup(lgroup, owner, refid, creds, tagsmap):
     try:
-        client = boto3.client('logs', aws_access_key_id=creds['AccessKeyId'],aws_secret_access_key=creds['SecretAccessKey'],aws_session_token=creds['SessionToken'],)
+        client = boto3.client('logs', aws_access_key_id=creds['AccessKeyId'], aws_secret_access_key=creds['SecretAccessKey'], aws_session_token=creds['SessionToken'],)
         response = client.create_log_group(
             logGroupName=lgroup,
             tags=tagsmap
         )
         print(response)
         return response
-    except Exception as e: print(e)
+    except Exception as e:
+        print(f"Error creating log group: {str(e)}")
+        return None
+
 
 def create_retention_policy(lgroup,days,creds):
     client = boto3.client('logs', aws_access_key_id=creds['AccessKeyId'],aws_secret_access_key=creds['SecretAccessKey'],aws_session_token=creds['SessionToken'],)
@@ -2491,6 +2494,9 @@ def validate_git_sod(jfrogurl):
     
     
 def lambda_handler(event, context):
+    # Log the incoming event for debugging
+    print("Received event: " + json.dumps(event))
+
     try:
         #comment below line if testing from within Lambda.
         event = json.loads(urllib.parse.unquote(str(event["body"])))
