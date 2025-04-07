@@ -1,6 +1,16 @@
 #Version v001
 import json
 import boto3
+import logging
+import traceback
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
 import time
 import urllib.parse
 import os
@@ -143,11 +153,14 @@ def create_awsloggroup(lgroup, owner, refid, creds, tagsmap):
             logGroupName=lgroup,
             tags=tagsmap
         )
-        print(response)
+        logger.info(f"Created CloudWatch log group: {lgroup}")
+        logger.debug(f"Log group response: {response}")
         return response
     except Exception as e:
-        print(f"Error creating log group: {str(e)}")
+        logger.error(f"Error creating log group {lgroup}: {str(e)}")
+        logger.debug(traceback.format_exc())
         return None
+
 
 
 def create_retention_policy(lgroup,days,creds):
@@ -2495,7 +2508,9 @@ def validate_git_sod(jfrogurl):
     
 def lambda_handler(event, context):
     # Log the incoming event for debugging
-    print("Received event: " + json.dumps(event))
+    logger.info("Received event")
+    logger.debug(f"Event details: {json.dumps(event)}")
+
 
     try:
         #comment below line if testing from within Lambda.
