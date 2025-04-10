@@ -1,0 +1,89 @@
+Here's a structured Confluence page based on your requirements:
+
+---
+
+# Protected Branch Configuration & Merge Request Troubleshooting  
+*Best practices for Git branch protection and resolving merge request issues*
+
+---
+
+## 1. Protected Branch Default Configuration  
+
+### **Recommended Settings**  
+- **Push Access**:  
+  🔒 `Developers + Maintainers` → Set to **0 (No one)**  
+  *Rationale*: Prevents direct pushes to critical branches (e.g., `main`, `production`), ensuring all changes go through merge requests.  
+
+- **Merge Access**:  
+  🔑 Configure to allow **Developers + Maintainers** to merge after approvals.  
+
+---
+
+### **How to Verify/Update Settings**  
+1. Navigate to **Repository Settings > Protected Branches**.  
+2. Select the branch (e.g., `main`).  
+3. Confirm:  
+   - *Allowed to push*: `No one`  
+   - *Allowed to merge*: `Developers + Maintainers` (or your approval group)  
+4. Update if deviations are found.  
+
+❗ **Warning**: Never grant push access to protected branches without strict justification.
+
+---
+
+## 2. Merge Request Approved but No Merge Button?  
+*Troubleshooting guide for invisible merge button*
+
+### **Scenario**:  
+- Merge Request (MR) is marked "Approved" and "Ready to Merge."  
+- **No merge button appears** for the user.  
+
+---
+
+### **Step 1: Validate Approval Eligibility**  
+- **Check Commit History**:  
+  1. Open the MR’s **Commits** tab.  
+  2. If the **approver has committed changes** to the MR:  
+     - ❌ Approval is **invalid** per SOD (Segregation of Duties).  
+     - ✅ Solution: Get approval from a **non-committer** in the approval group.  
+
+---
+
+### **Step 2: Verify Project Membership**  
+- **Who can merge?**:  
+  - Only **project members** with Developer/Maintainer roles.  
+  - If you’re an external contributor/guest:  
+    - 🛑 You cannot merge even with approval.  
+    - ✅ Solution: Ask a project member to merge.  
+
+---
+
+### **Step 3: Check Protected Branch Settings**  
+- Navigate to **Protected Branches > Allowed to Merge**:  
+  - If set to `No one`:  
+    - 🛑 Merge button is hidden for **all users**.  
+  - ✅ Solution: Update to `Developers + Maintainers` or a specific approval group.  
+
+---
+
+### **Other Checks**  
+- **MR Status**: Ensure CI/CD pipelines (if any) are passing.  
+- **Approval Rules**: Confirm required approvals are met (e.g., 2+ approvals).  
+
+---
+
+## Summary Table  
+
+| Issue | Cause | Solution |  
+|-------|-------|----------|  
+| No merge button | Approver has commits in MR | Reassign approval to non-committer |  
+| No merge button | User is not a project member | Ask project member to merge |  
+| No merge button | Protected branch "Allowed to merge" = `No one` | Update branch settings |  
+
+---
+
+**Questions?** Contact the DevOps team or refer to [Git Documentation](link).  
+
+--- 
+
+This structure uses clear headings, step-by-step troubleshooting, and visual cues (emojis/icons) for better readability. Adjust terminology (e.g., "Developers + Maintainers") to match your organization's roles.
