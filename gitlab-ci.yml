@@ -1,0 +1,9 @@
+# .gitlab-ci.yml
+include:
+  - remote: 'https://gitlab.example.com/your-shared-library/raw/main/templates/sonar.yml'  # Existing
+  - remote: 'https://gitlab.example.com/your-shared-library/raw/main/templates/mr-sonarqube-check.yml'  # New
+
+stages:
+  - codequality
+
+# Existing jobs will remain untouched
