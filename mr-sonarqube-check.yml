@@ -1,0 +1,35 @@
+# mr-sonarqube-check.yml
+# Purpose: SonarQube analysis specifically for Merge Requests
+# Include this template in your project's CI configuration
+
+.sonarqube-mr-check:template:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == 'merge_request_event'  # Run only for MRs
+  variables:
+    SONAR_PR_ARGS: >
+      -Dsonar.pullrequest.key=$CI_MERGE_REQUEST_IID
+      -Dsonar.pullrequest.branch=$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME
+      -Dsonar.pullrequest.base=$CI_MERGE_REQUEST_TARGET_BRANCH_NAME
+      -Dsonar.qualitygate.wait=true
+
+sonarqube-mr-check:
+  extends:
+    - .sonarqube-mr-check:template
+    - sonarqube-check  # Extend your existing SonarQube job
+  variables:
+    SONAR_HOST_URL: $SONAR_HOST_URL_PROD  # Use production SonarQube instance
+    SONAR_TOKEN: $SONAR_TOKEN_PROD
+  script:
+    - |
+      if [[ "$STAGE_BUILD_WITH" == "dotnet" ]]; then
+        echo "Running SonarQube analysis for .NET (MR)"
+        dotnet-sonarscanner begin /k:"${BASE_ARTIFACT_NAME}-${APP_NAME}" /n:"${BASE_ARTIFACT}-${APP_NAME}" $SONAR_PR_ARGS ...
+        # Rest of your .NET commands
+      elif [[ "$STAGE_BUILD_WITH" == "mavenreleaseconfig" ]]; then
+        echo "Running SonarQube analysis for Maven (MR)"
+        mvn -f "$POM_FILE" ... $SONAR_PR_ARGS ...
+      fi
+  allow_failure: false  # Enforce strict checks for MRs
+
+
+  #templates/mr-sonarqube-check.yml
