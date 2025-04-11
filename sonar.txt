@@ -1,0 +1,39 @@
+Required Pipeline Status:
+
+Go to Settings > Merge Requests in your project.
+
+Enable "Pipelines must succeed".
+
+Add sonarqube-mr-check as a required status check under Merge Checks.
+
+Security Policies (Optional but recommended):
+
+Navigate to Security & Compliance > Policies.
+
+Create a Scan Result Policy:
+
+yaml
+Copy
+scan_result_policy:
+  name: "Require SonarQube Quality Gate Pass"
+  description: "Block MRs if SonarQube Quality Gate fails"
+  enabled: true
+  rules:
+    - type: scan_finding
+      scanners: [sast]
+      vulnerabilities_allowed: 0
+  actions:
+    - type: require_approval
+      approvals_required: 1
+Step 4: SonarQube Configuration (Server Side)
+Configure GitLab Integration:
+
+In SonarQube, go to Administration > ALM Integrations > GitLab.
+
+Enable Merge Request Decoration to show SonarQube results directly in MRs.
+
+Generate a SonarQube Token and configure it in GitLab CI variables as SONAR_TOKEN_PROD.
+
+Quality Gate:
+
+Define strict Quality Gate rules in SonarQube (e.g., coverage thresholds, zero new vulnerabilities).
