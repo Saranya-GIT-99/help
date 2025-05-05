@@ -103,23 +103,39 @@ def process_repo_path(repo, path):
     artifact_type = get_artifact_type(repo, path)
     if not artifact_type:
         return
-    
+
     if artifact_type == 'file':
         dir_part, file_part = os.path.split(path)
         dir_part = dir_part if dir_part else '.'
         if not backup_file({'repo': repo, 'path': dir_part, 'name': file_part}):
             return
         delete_artifact(repo, dir_part, file_part)
-    else:
+
+    elif artifact_type == 'folder':
         files = find_files_in_folder(repo, path)
         if not files:
             print(f"No files found in {repo}/{path}.")
-            return
-        all_backed_up = all(backup_file(f) for f in files)
-        if all_backed_up:
+            # Still try to delete empty folder
             delete_artifact(repo, path)
-        else:
+            return
+
+        # Backup all files
+        all_backed_up = True
+        for f in files:
+            if not backup_file(f):
+                all_backed_up = False
+
+        if not all_backed_up:
             print(f"Skipped deletion for {repo}/{path} due to backup failures.")
+            return
+
+        # Delete all files
+        for f in files:
+            delete_artifact(f['repo'], f['path'], f['name'])
+
+        # Now delete the folder
+        delete_artifact(repo, path)
+
 
 def main():
     """Main function to read Excel and process entries."""
